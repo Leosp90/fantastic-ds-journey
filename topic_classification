@@ -1,0 +1,114 @@
+import pandas as pd
+import random
+import numpy as np
+import openai
+from openai import AsyncOpenAI
+import asyncio
+from tqdm.asyncio import tqdm
+import sys
+
+MAX_CONCURRENCY = 32
+semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+model = "gpt-4o-mini"
+api_key="sk-proj..."
+async_client = AsyncOpenAI(
+    api_key=api_key,
+)
+
+
+#### define LLM prompt as below
+topics = [
+    "Options Trading Strategies",
+    "Stock Market Analysis",
+    "Industry & Sector Trend",
+    "Trading Terminology & Tools",
+    "Technical Indicators & Analysis",
+    "Non-Financial/Unrelated Topics",
+    "Market Sentiment & Trends",
+    "Earnings & Financial Reports",
+    "Cryptocurrency",
+    "Forex"
+]
+### define the prompt
+prompt = f"""\
+You are an expert in financial and trading topics. You will be given a list of 10 predefined topics:
+Here are the topic list:
+{','.join(topics)}
+
+Your task is to assign the message to the most representative topic from the topic list given above. 
+
+**Instructions:**
+- Your response **must be exactly one of the predefined topics** without any additional text, punctuation, or special characters;
+- If a message is ambiguous or lacks detail, infer the most likely topic based on common financial and trading contexts.
+- **Only return "Non-Financial/Unrelated Topics" if the message is clearly irrelevant or does not pertain to financial, trading, or market-related subjects at all**.
+- do not provide any other content, explanations, or answers to message, nor to repeat the message;
+- **Strictly limit your response to the topic name only**, ensuring it is no longer than 10 words;
+
+
+Here are some examples to guide you:
+
+1. **Message**: New tools for automated trading and their advantages
+   **Response**: Trading Terminology & Tools
+
+2. **Message**: The latest financial report from a major company.
+   **Response**: Earnings & Financial Reports
+
+3. **Message**: What stock should I buy tomorrow under $5
+   **Response**: Stock Market Analysis
+
+4. **Message**: ?
+   **Response**: Non-Financial/Unrelated Topics
+
+5. **Message**: spy
+   **Response**: Stock Market Analysis
+
+5. **Message**: when is the cpi data
+   **Response**: Market Sentiment & Trends
+
+"""
+prompt += '**Messages**: "{message}" Response:'
+
+
+async def process_review(text):
+    async with semaphore:
+        try:
+            input = [{"role": "user", "content": prompt.format(message=text)}]
+
+            res = await async_client.chat.completions.create(
+                model=model,
+                messages=input,
+            )
+            result = res.choices[0].message.content
+
+            if result not in topics:
+                result = "Non-Financial/Unrelated Topics"
+            return result
+
+        except Exception as e:
+            print(f"Error: {e}. Failed {text}")
+            return ""
+
+
+async def main(docs):
+    docs = [docs] if isinstance(docs, str) else docs
+    tasks = []
+    for i, text in enumerate(docs):  # Use enumerate to get both index and text
+        tasks.append((i, process_review(text)))  # Store index and task together
+    res = await tqdm.gather(*(task[1] for task in tasks))
+    return res
+
+
+if __name__ == "__main__":
+    # Get the input text from command-line arguments
+    input_text = sys.argv[1]  # Collect the input string
+
+    if not input_text:
+        print("Please provide the input text")
+        sys.exit(1)
+
+    # Run the async main function with the provided input
+    final_output = asyncio.run(main(input_text))
+
+    # Print the final output
+    print(f"input: {input_text}")
+    print(f"Response: {final_output}")
